@@ -1,3 +1,4 @@
+import html
 import os
 import re
 import requests
@@ -69,7 +70,7 @@ class TelegramNotifier:
         if desc and len(desc) > 300:
             desc = desc[:300].rsplit(' ', 1)[0] + "..."
 
-        desc_block = f"\n<i>{desc}</i>" if desc and desc.lower() != "see listing" \
+        desc_block = f"\n<i>{html.escape(desc)}</i>" if desc and desc.lower() != "see listing" \
                      and "linkedin" not in desc.lower() \
                      and "idealist" not in desc.lower() else ""
 
@@ -82,10 +83,10 @@ class TelegramNotifier:
             logger.warning(f"Invalid URL for job '{job.get('title')}': '{raw_url}'")
 
         message = (
-            f"{emoji} <b>New NGO Job Alert — {source}</b>\n\n"
-            f"📋 <b>Title:</b> {job.get('title', 'N/A')}\n"
-            f"🏢 <b>Organisation:</b> {job.get('company', 'See listing')}\n"
-            f"📍 <b>Location:</b> {location}\n"
+            f"{emoji} <b>New NGO Job Alert — {html.escape(source)}</b>\n\n"
+            f"📋 <b>Title:</b> {html.escape(job.get('title', 'N/A'))}\n"
+            f"🏢 <b>Organisation:</b> {html.escape(job.get('company', 'See listing'))}\n"
+            f"📍 <b>Location:</b> {html.escape(location)}\n"
             f"{desc_block}\n\n"
             f"{apply_button}"
         )
