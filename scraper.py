@@ -47,167 +47,13 @@ class BaseScraper:
         return has_core and not is_excluded
 
 
-# ─── Scraper 1: ReliefWeb API v2 (Official UN/Humanitarian Jobs) ─────────────
-class ReliefWebScraper(BaseScraper):
-    API_URL = "https://api.reliefweb.int/v2/jobs"
-
-    SEARCH_QUERIES = [
-        "project coordinator India",
-        "community development India",
-        "social work India",
-        "monitoring evaluation India",
-        "social impact",
-    ]
-
-    def fetch_jobs(self):
-        jobs = []
-        seen_ids = set()
-
-        for query in self.SEARCH_QUERIES:
-            try:
-                # ReliefWeb v2 query structure
-                payload = {
-                    "appname": "ngo-job-tracker",
-                    "query": {"value": query, "operator": "AND"},
-                    "fields": {
-                        "include": ["title", "body", "url", "source", "date", "country"]
-                    },
-                    "limit": 15,
-                    "sort": ["date:desc"]
-                }
-                response = self.session.post(self.API_URL, json=payload, timeout=15)
-                response.raise_for_status()
-                data = response.json()
-
-                for item in data.get("data", []):
-                    fields = item.get("fields", {})
-                    job_id = str(item.get("id", ""))
-
-                    if job_id in seen_ids:
-                        continue
-
-                    title = fields.get("title", "")
-                    body = fields.get("body", "")
-                    source_list = fields.get("source", [])
-                    company = source_list[0].get("name", "Unknown") if source_list else "Unknown"
-                    url = fields.get("url", "")
-                    countries = fields.get("country", [])
-                    location = ", ".join(c.get("name", "") for c in countries) if countries else "Global"
-
-                    clean_desc = BeautifulSoup(body, "html.parser").get_text(
-                        separator=' ', strip=True
-                    )[:500] if body else ""
-
-                    if self.matches_profile(title, clean_desc, location):
-                        seen_ids.add(job_id)
-                        jobs.append({
-                            "id": f"reliefweb_{job_id}",
-                            "title": title,
-                            "company": company,
-                            "url": url,
-                            "source": "ReliefWeb",
-                            "description": clean_desc,
-                            "location": location
-                        })
-
-            except Exception as e:
-                logger.error(f"[ReliefWeb v2] Error for query '{query}': {e}")
-
-        logger.info(f"[ReliefWeb v2] Found {len(jobs)} matching jobs.")
-        return jobs
-
-
-# ─── Scraper 2: WeWorkRemotely RSS (Remote AI/Linguist/Data) ─────────────────
-class WeWorkRemotelyScraper(BaseScraper):
-    FEED_URL = "https://weworkremotely.com/categories/remote-data-programming-jobs.rss"
-
-    def fetch_jobs(self):
-        jobs = []
-        try:
-            response = self.session.get(self.FEED_URL, timeout=15)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, 'xml')
-            items = soup.find_all(['item', 'entry'])
-
-            for item in items:
-                title = item.title.text.strip() if item.title else ""
-                description = item.description.text if item.description else ""
-                
-                url = ""
-                link_tag = item.find('link')
-                if link_tag:
-                    url = link_tag.text.strip() if link_tag.text else link_tag.get('href', '')
-
-                job_id = item.guid.text.strip() if item.guid else url
-                clean_desc = BeautifulSoup(description, "html.parser").get_text(separator=' ', strip=True)[:500]
-
-                if self.matches_profile(title, clean_desc):
-                    jobs.append({
-                        "id": f"wwr_{job_id}",
-                        "title": title,
-                        "company": "See listing",
-                        "url": url,
-                        "source": "WeWorkRemotely",
-                        "description": clean_desc,
-                        "location": "Remote"
-                    })
-            logger.info(f"[WeWorkRemotely] Found {len(jobs)} matching jobs.")
-        except Exception as e:
-            logger.error(f"[WeWorkRemotely] Error: {e}")
-        return jobs
-
-
-# ─── Scraper 3: Remotive API (Remote Social Impact & AI) ─────────────────────
-class RemotiveSocialScraper(BaseScraper):
-    API_URL = "https://remotive.com/api/remote-jobs"
-    SEARCH_TERMS = ["social impact", "nonprofit", "ngo", "prompt engineer", "linguist"]
-
-    def fetch_jobs(self):
-        jobs = []
-        seen_ids = set()
-
-        for term in self.SEARCH_TERMS:
-            try:
-                response = self.session.get(self.API_URL, params={"search": term}, timeout=15)
-                response.raise_for_status()
-                data = response.json()
-
-                for job in data.get("jobs", []):
-                    title = job.get("title", "")
-                    description = job.get("description", "")
-                    job_id = str(job.get("id", ""))
-
-                    if job_id in seen_ids:
-                        continue
-
-                    clean_desc = BeautifulSoup(description, "html.parser").get_text(
-                        separator=' ', strip=True
-                    )[:500] if description else ""
-
-                    if self.matches_profile(title, clean_desc):
-                        seen_ids.add(job_id)
-                        jobs.append({
-                            "id": f"remotive_{job_id}",
-                            "title": title,
-                            "company": job.get("company_name", "Unknown"),
-                            "url": job.get("url", ""),
-                            "source": "Remotive",
-                            "description": clean_desc,
-                            "location": job.get("candidate_required_location", "Remote")
-                        })
-            except Exception as e:
-                logger.error(f"[Remotive] Error for '{term}': {e}")
-
-        logger.info(f"[Remotive] Found {len(jobs)} matching jobs.")
-        return jobs
-
-
-# ─── Scraper 4: LinkedIn Public Scraper ──────────────────────────────────────
+# ─── Scraper 1: LinkedIn Public Scraper ──────────────────────────────────────
 class LinkedInNGOScraper(BaseScraper):
     SEARCH_QUERIES = [
         ("project coordinator ngo", "India"),
         ("social work", "Jharkhand India"),
         ("csr manager", "India"),
+        ("community development", "India"),
     ]
 
     def fetch_jobs(self):
@@ -217,6 +63,7 @@ class LinkedInNGOScraper(BaseScraper):
         for keywords, location in self.SEARCH_QUERIES:
             encoded_kw = quote_plus(keywords)
             encoded_loc = quote_plus(location)
+            # f_TPR=r604800 filters for past 7 days
             url = f"https://www.linkedin.com/jobs/search?keywords={encoded_kw}&location={encoded_loc}&f_TPR=r604800"
             try:
                 response = self.session.get(url, timeout=15)
@@ -260,10 +107,72 @@ class LinkedInNGOScraper(BaseScraper):
         return jobs
 
 
+# ─── Scraper 2: Indeed Public Scraper ────────────────────────────────────────
+class IndeedNGOScraper(BaseScraper):
+    SEARCH_QUERIES = [
+        ("ngo project coordinator", "India"),
+        ("social work", "Jharkhand"),
+        ("csr manager", "India"),
+    ]
+
+    def fetch_jobs(self):
+        jobs = []
+        seen_ids = set()
+
+        for keywords, location in self.SEARCH_QUERIES:
+            encoded_kw = quote_plus(keywords)
+            encoded_loc = quote_plus(location)
+            url = f"https://in.indeed.com/jobs?q={encoded_kw}&l={encoded_loc}&fromage=7"
+            try:
+                # Indeed requires clean headers to bypass bot blocks
+                response = self.session.get(url, timeout=15)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+
+                # Indeed job cards usually have class td-heading or job_seen_beacon
+                cards = soup.find_all('td', class_='resultContent') or soup.find_all('div', class_='job_seen_beacon')
+                for card in cards:
+                    title_el = card.find('h2', class_='jobTitle') or card.find('span', title=True)
+                    company_el = card.find('span', class_='companyName') or card.find('span', attrs={'data-testid': 'company-name'})
+                    loc_el = card.find('div', class_='companyLocation') or card.find('div', attrs={'data-testid': 'text-location'})
+                    link_el = card.find('a', href=True)
+
+                    if not title_el or not link_el:
+                        continue
+
+                    title = title_el.text.strip()
+                    company = company_el.text.strip() if company_el else "Unknown"
+                    location_text = loc_el.text.strip() if loc_el else "India"
+                    href = link_el['href']
+                    job_url = f"https://in.indeed.com{href}" if href.startswith('/') else href
+                    
+                    # Extract unique job key (jk)
+                    jk_match = re.search(r'jk=([a-f0-9]+)', job_url)
+                    job_id = jk_match.group(1) if jk_match else job_url.split('/')[-1]
+
+                    if job_id in seen_ids:
+                        continue
+
+                    if self.matches_profile(title, "", location_text):
+                        seen_ids.add(job_id)
+                        jobs.append({
+                            "id": f"indeed_{job_id}",
+                            "title": title,
+                            "company": company,
+                            "url": job_url,
+                            "source": "Indeed",
+                            "description": "View Indeed listing for full details.",
+                            "location": location_text
+                        })
+            except Exception as e:
+                logger.error(f"[Indeed] Error for '{keywords}': {e}")
+
+        logger.info(f"[Indeed] Found {len(jobs)} matching jobs.")
+        return jobs
+
+
 def get_all_scrapers():
     return [
-        ReliefWebScraper(),
-        WeWorkRemotelyScraper(),
-        RemotiveSocialScraper(),
         LinkedInNGOScraper(),
+        IndeedNGOScraper(),
     ]
