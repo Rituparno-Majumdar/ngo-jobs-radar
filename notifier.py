@@ -1,8 +1,26 @@
 import os
+import re
 import requests
 import logging
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def url_safe(url: str) -> str:
+    """Escape & → &amp; so Telegram HTML parse mode renders the link correctly."""
+    return url.replace('&', '&amp;') if url else '#'
+
+
+def is_valid_url(url: str) -> bool:
+    """Return True if url looks like an absolute HTTP/HTTPS link."""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ('http', 'https') and bool(parsed.netloc)
+    except Exception:
+        return False
 
 # Source emojis for visual scanning in Telegram
 SOURCE_EMOJI = {
@@ -17,8 +35,17 @@ SOURCE_EMOJI = {
 
 class TelegramNotifier:
     def __init__(self, bot_token=None, chat_id=None):
-        self.bot_token = bot_token or os.environ.get("TELEGRAM_BOT_TOKEN")
-        self.chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
+        # Use dedicated NGO bot secrets; fall back to shared token if not set
+        self.bot_token = (
+            bot_token
+            or os.environ.get("NGO_TELEGRAM_BOT_TOKEN")
+            or os.environ.get("TELEGRAM_BOT_TOKEN")
+        )
+        self.chat_id = (
+            chat_id
+            or os.environ.get("NGO_TELEGRAM_CHAT_ID")
+            or os.environ.get("TELEGRAM_CHAT_ID")
+        )
 
         if not self.bot_token or not self.chat_id:
             logger.warning("Telegram credentials not fully set. Notifications disabled.")
@@ -44,13 +71,21 @@ class TelegramNotifier:
                      and "linkedin" not in desc.lower() \
                      and "idealist" not in desc.lower() else ""
 
+        # Validate and escape the URL for Telegram HTML mode
+        raw_url = job.get('url', '')
+        if is_valid_url(raw_url):
+            apply_button = f'<a href="{url_safe(raw_url)}">🔍 View &amp; Apply</a>'
+        else:
+            apply_button = "⚠️ Link unavailable — search the title on the source site."
+            logger.warning(f"Invalid URL for job '{job.get('title')}': '{raw_url}'")
+
         message = (
             f"{emoji} <b>New NGO Job Alert — {source}</b>\n\n"
             f"📋 <b>Title:</b> {job.get('title', 'N/A')}\n"
             f"🏢 <b>Organisation:</b> {job.get('company', 'See listing')}\n"
             f"📍 <b>Location:</b> {location}\n"
             f"{desc_block}\n\n"
-            f"<a href='{job.get('url', '#')}'>🔍 View & Apply</a>"
+            f"{apply_button}"
         )
 
         payload = {

@@ -2,9 +2,8 @@ name: NGO Job Tracker
 
 on:
   schedule:
-    # Runs every 6 hours at minute 23 (staggered from data annotation tracker)
-    # 00:23, 06:23, 12:23, 18:23 UTC = 05:53, 11:53, 17:53, 23:53 IST
-    - cron: '23 */6 * * *'
+    # Runs twice daily: 06:00 and 18:00 UTC = 11:30 AM and 11:30 PM IST
+    - cron: '0 6,18 * * *'
   workflow_dispatch: # Run manually from GitHub Actions tab
 
 jobs:
@@ -31,8 +30,8 @@ jobs:
 
       - name: Run NGO Job Tracker
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NGO_TELEGRAM_BOT_TOKEN: ${{ secrets.NGO_TELEGRAM_BOT_TOKEN }}
+          NGO_TELEGRAM_CHAT_ID: ${{ secrets.NGO_TELEGRAM_CHAT_ID }}
         run: python main.py
 
       - name: Commit and push updated seen_jobs.json
