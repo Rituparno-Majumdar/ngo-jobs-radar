@@ -30,6 +30,8 @@ SOURCE_EMOJI = {
     "LinkedIn":      "🔗",
     "NGOJobsIndia":  "🇮🇳",
     "Remotive":      "💻",
+    "Indeed":        "🔍",
+    "DevelopmentWala": "🪔",
 }
 
 

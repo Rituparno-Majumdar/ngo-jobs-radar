@@ -171,8 +171,54 @@ class IndeedNGOScraper(BaseScraper):
         return jobs
 
 
+# ─── Scraper 3: Development Wala (Sitemap Scraper) ──────────────────────────
+class DevelopmentWalaScraper(BaseScraper):
+    SITEMAP_URL = "https://developmentwala.com/sitemap-1.xml"
+
+    def fetch_jobs(self):
+        jobs = []
+        seen_ids = set()
+        try:
+            response = self.session.get(self.SITEMAP_URL, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'xml')
+            loc_tags = soup.find_all('loc')
+
+            for loc in loc_tags:
+                url = loc.text.strip()
+                # Filter URLs that look like job/fellowship/career postings
+                if any(k in url for k in ['job', 'fellowship', 'opportunity', 'career', 'program-coordinator', 'social-sector']):
+                    # Clean up URL slug to create a human-readable title
+                    slug = url.rstrip('/').split('/')[-1]
+                    title_clean = slug.replace('-', ' ').title()
+                    job_id = slug
+
+                    if job_id in seen_ids:
+                        continue
+
+                    # Filter against profile keywords
+                    if self.matches_profile(title_clean, "", "India"):
+                        seen_ids.add(job_id)
+                        jobs.append({
+                            "id": f"devwala_{job_id}",
+                            "title": title_clean,
+                            "company": "Development Wala",
+                            "url": url,
+                            "source": "DevelopmentWala",
+                            "description": "View Development Wala listing for full details.",
+                            "location": "India"
+                        })
+            logger.info(f"[DevelopmentWala] Found {len(jobs)} matching opportunities.")
+        except Exception as e:
+            logger.error(f"[DevelopmentWala] Error: {e}")
+
+        return jobs
+
+
 def get_all_scrapers():
     return [
         LinkedInNGOScraper(),
         IndeedNGOScraper(),
+        DevelopmentWalaScraper(),
     ]
+
