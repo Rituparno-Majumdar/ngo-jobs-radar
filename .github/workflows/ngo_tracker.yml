@@ -1,0 +1,50 @@
+name: NGO Job Tracker
+
+on:
+  schedule:
+    # Runs every 6 hours at minute 23 (staggered from data annotation tracker)
+    # 00:23, 06:23, 12:23, 18:23 UTC = 05:53, 11:53, 17:53, 23:53 IST
+    - cron: '23 */6 * * *'
+  workflow_dispatch: # Run manually from GitHub Actions tab
+
+jobs:
+  run-ngo-tracker:
+    runs-on: ubuntu-latest
+
+    # Permission to push updated seen_jobs.json back to repo
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run NGO Job Tracker
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      - name: Commit and push updated seen_jobs.json
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add seen_jobs.json tracker.log
+
+          # Only commit if something changed
+          if git diff --staged --quiet; then
+            echo "No new jobs found. Nothing to commit."
+          else
+            git commit -m "🤖 Auto-update: NGO tracker run $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
