@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 import re
 import os
 import logging
+import time
+import random
 from urllib.parse import quote_plus
 
 logger = logging.getLogger(__name__)
@@ -29,11 +31,13 @@ class BaseScraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': (
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/124.0.0.0 Safari/537.36'
-            )
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         })
 
     def fetch_jobs(self):
@@ -67,6 +71,8 @@ class LinkedInNGOScraper(BaseScraper):
             url = f"https://www.linkedin.com/jobs/search?keywords={encoded_kw}&location={encoded_loc}&f_TPR=r604800"
             try:
                 response = self.session.get(url, timeout=15)
+                # Random delay between queries to avoid bot detection
+                time.sleep(random.uniform(2, 4))
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -119,13 +125,25 @@ class IndeedNGOScraper(BaseScraper):
         jobs = []
         seen_ids = set()
 
+        # Pre-flight: visit home page to get session cookies
+        try:
+            self.session.get("https://in.indeed.com/", timeout=10)
+            time.sleep(random.uniform(1, 2))
+        except Exception as e:
+            logger.warning(f"[Indeed] Pre-flight failed: {e}")
+
         for keywords, location in self.SEARCH_QUERIES:
             encoded_kw = quote_plus(keywords)
             encoded_loc = quote_plus(location)
             url = f"https://in.indeed.com/jobs?q={encoded_kw}&l={encoded_loc}&fromage=7"
             try:
+                # Set Referer to make it look like a search from the home page
+                self.session.headers.update({'Referer': 'https://in.indeed.com/'})
+                
                 # Indeed requires clean headers to bypass bot blocks
                 response = self.session.get(url, timeout=15)
+                # Indeed is very sensitive; longer random delay
+                time.sleep(random.uniform(3, 6))
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
 
