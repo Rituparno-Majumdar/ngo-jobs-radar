@@ -1,12 +1,10 @@
-# 🌱 NGO Job Tracker — Rituparno's Automated Career Pipeline
+# Social Sector Job Tracker
 
-A fully automated NGO/social sector job alert system built on **GitHub Actions + Telegram**, 
-designed specifically for Rituparno's expertise: social work, CSR, community development, 
-AI for social impact, and project coordination.
+I built this to stop manually checking job boards every day. It runs automatically on GitHub Actions, scrapes 6 platforms for NGO and development sector roles in India, filters them against my profile, and sends Telegram alerts in real time — twice daily, hands-free.
 
-## 🎯 What It Tracks
+## What I Track
 
-Based on profile expertise:
+My focus areas:
 - **NGO / Development Sector**: Project Coordinator, Program Officer, Field Coordinator roles
 - **CSR**: Corporate Social Responsibility programme management
 - **Community Development**: Livelihood, rural development, tribal welfare, capacity building
@@ -15,7 +13,7 @@ Based on profile expertise:
 - **M&E**: Monitoring & Evaluation positions
 - **International Organisations**: UNDP, UNICEF, Oxfam, CARE India aligned roles
 
-## 📡 Job Sources (6 Platforms)
+## Job Sources
 
 | Platform | Type | Focus |
 |---|---|---|
@@ -26,28 +24,28 @@ Based on profile expertise:
 | **NGOJobsIndia** | RSS | India-specific NGO board |
 | **Remotive** | REST API | Remote social impact / AI roles |
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-ngo/
 ├── main.py               # Orchestrator — deduplication, logging, summary
-├── scraper.py            # 6 job scrapers with profile-matched keyword filters
-├── notifier.py           # Telegram bot with rich HTML formatting
+├── scraper.py            # 6 job scrapers with keyword profile matching
+├── notifier.py           # Telegram bot with rich HTML formatting + retry logic
 ├── test_notification.py  # Test credentials before deploying
 ├── seen_jobs.json        # Persisted job IDs (auto-committed by GitHub Actions)
 ├── requirements.txt
 ├── .env                  # Local credentials (NOT committed)
 └── .github/
     └── workflows/
-        └── ngo_tracker.yml   # Runs every 6 hours
+        └── ngo_tracker.yml   # Runs twice daily
 ```
 
-## 🚀 Setup
+## Setup
 
-### 1. Clone and install locally
+### 1. Clone and install
 
 ```bash
-cd /Users/pari/Documents/ANTIGRAVITY/jobsearch/ngo
+git clone https://github.com/Rituparno-Majumdar/social-sector-job-tracker.git
+cd social-sector-job-tracker
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -55,49 +53,33 @@ pip install -r requirements.txt
 
 ### 2. Configure Telegram credentials
 
-Edit `.env`:
+Create a `.env` file:
 ```
-TELEGRAM_BOT_TOKEN=your_bot_token_here
-TELEGRAM_CHAT_ID=your_chat_id_here
+NGO_TELEGRAM_BOT_TOKEN=your_bot_token_here
+NGO_TELEGRAM_CHAT_ID=your_chat_id_here
 ```
 
-> 💡 Reuse the **same bot token and chat ID** from your data annotation tracker — 
-> they're already set up! You'll receive both alert streams in the same chat, 
-> distinguished by emoji (🇺🇳 ReliefWeb, 🇮🇳 NGOJobsIndia, 🔗 LinkedIn, etc.)
-
-### 3. Test locally
-
+To find your chat ID, message your bot on Telegram, then run:
 ```bash
-python test_notification.py   # Sends a sample alert to your Telegram
-python main.py                # Full dry run
+python test_notification.py
 ```
 
-### 4. Push to GitHub
+### 3. Add GitHub Secrets
 
-```bash
-git init
-git add .
-git commit -m "Initial NGO job tracker setup"
-git remote add origin https://github.com/YOUR_USERNAME/ngo-job-tracker.git
-git push -u origin main
-```
+In your repo: **Settings → Secrets and variables → Actions**
 
-### 5. Add GitHub Secrets
-
-In your GitHub repo → **Settings → Secrets and variables → Actions**:
-
-| Secret Name | Value |
+| Secret | Value |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Your bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Your personal chat ID |
+| `NGO_TELEGRAM_BOT_TOKEN` | Your bot token from @BotFather |
+| `NGO_TELEGRAM_CHAT_ID` | Your personal chat ID |
 
-## ⏰ Schedule
+Also enable **Read and write permissions** under **Settings → Actions → General → Workflow permissions**.
 
-Runs automatically **every 6 hours** (00:23, 06:23, 12:23, 18:23 UTC = 05:53, 11:53, 17:53, 23:53 IST).
+## Schedule
 
-Staggered 6 minutes after the data annotation tracker to avoid simultaneous GitHub Actions runs.
+Runs automatically twice daily at **06:15 AM and 06:15 PM IST** (00:45 and 12:45 UTC).
 
-## 📬 What a Telegram Alert Looks Like
+## Sample Telegram Alert
 
 ```
 🇺🇳 New NGO Job Alert — ReliefWeb
@@ -106,13 +88,13 @@ Staggered 6 minutes after the data annotation tracker to avoid simultaneous GitH
 🏢 Organisation: UNICEF India
 📍 Location: Jharkhand, India
 
-Seeking a coordinator with 3+ years experience in rural 
+Seeking a coordinator with 3+ years experience in rural
 community development and M&E frameworks...
 
 🔍 View & Apply
 ```
 
-## 🔧 Customisation
+## Customisation
 
-Edit `scraper.py` → `CORE_TERMS` list to broaden or narrow the job matching.  
+Edit `scraper.py` → `CORE_TERMS` to broaden or narrow job matching.
 Edit `scraper.py` → `EXCLUDE_TERMS` to filter out unwanted listings.
