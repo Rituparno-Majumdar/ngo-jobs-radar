@@ -168,7 +168,7 @@ class IndeedNGOScraper(BaseScraper):
                     job_url = f"https://in.indeed.com{href}" if href.startswith('/') else href
                     
                     # Extract unique job key (jk)
-                    jk_match = re.search(r'jk=([a-f0-9]+)', job_url)
+                    jk_match = re.search(r'jk=([a-fA-F0-9]+)', job_url)
                     job_id = jk_match.group(1) if jk_match else job_url.split('/')[-1]
 
                     if job_id in seen_ids:

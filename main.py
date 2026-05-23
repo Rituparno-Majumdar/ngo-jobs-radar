@@ -54,6 +54,7 @@ def main():
 
     new_jobs_found = 0
     total_checked = 0
+    scraper_stats = {}
 
     for scraper in scrapers:
         scraper_name = scraper.__class__.__name__
@@ -63,8 +64,10 @@ def main():
             jobs = scraper.fetch_jobs()
         except Exception as e:
             logger.error(f"Scraper {scraper_name} failed with unhandled exception: {e}")
+            scraper_stats[scraper_name] = {"found": 0, "new": 0, "failed": True}
             continue
 
+        scraper_new = 0
         total_checked += len(jobs)
 
         for job in jobs:
@@ -76,10 +79,11 @@ def main():
                 logger.info(f"  🆕 New job: {job.get('title')} [{job.get('source')}]")
 
                 success = notifier.send_job_alert(job)
-                
+
                 if success:
                     seen_jobs.add(job_id)
                     new_jobs_found += 1
+                    scraper_new += 1
                     # Small delay to prevent Telegram rate limiting
                     time.sleep(1)
                 else:
@@ -87,11 +91,15 @@ def main():
             else:
                 logger.debug(f"  ✅ Already seen: {job_id}")
 
+        scraper_stats[scraper_name] = {"found": len(jobs), "new": scraper_new, "failed": False}
+        if len(jobs) == 0:
+            logger.warning(f"⚠️ {scraper_name} returned 0 results — may be blocked or broken.")
+
     # Save updated seen list
     save_seen_jobs(seen_jobs)
 
     # Send summary heartbeat
-    notifier.send_summary(new_jobs_found, total_checked)
+    notifier.send_summary(new_jobs_found, total_checked, scraper_stats)
 
     logger.info("=" * 60)
     logger.info(f"✅ Done. Sent {new_jobs_found} new alerts from {total_checked} listings checked.")

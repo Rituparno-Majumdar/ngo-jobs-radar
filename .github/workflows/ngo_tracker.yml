@@ -9,6 +9,7 @@ on:
 jobs:
   run-ngo-tracker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     # Permission to push updated seen_jobs.json back to repo
     permissions:
