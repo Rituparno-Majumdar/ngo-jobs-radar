@@ -1,5 +1,10 @@
 # Social Sector Job Tracker
 
+![GitHub Actions](https://github.com/Rituparno-Majumdar/ngo-jobs-radar/actions/workflows/ngo_tracker.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.11-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-GitHub%20Actions-lightgrey)
+
 I built this to stop manually checking job boards every day. It runs automatically on GitHub Actions, scrapes 6 platforms for NGO and development sector roles in India, filters them against my profile, and sends Telegram alerts in real time — twice daily, hands-free.
 
 ## What I Track
