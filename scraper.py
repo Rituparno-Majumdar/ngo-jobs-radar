@@ -108,7 +108,8 @@ class LinkedInNGOScraper(BaseScraper):
                             "url": job_url,
                             "source": "LinkedIn",
                             "description": "View LinkedIn listing for full details.",
-                            "location": location_text
+                            "location": location_text,
+                            "date_posted": ""
                         })
             except Exception as e:
                 logger.error(f"[LinkedIn] Error for '{keywords}': {e}")
@@ -184,7 +185,8 @@ class IndeedNGOScraper(BaseScraper):
                             "url": job_url,
                             "source": "Indeed",
                             "description": "View Indeed listing for full details.",
-                            "location": location_text
+                            "location": location_text,
+                            "date_posted": ""
                         })
             except Exception as e:
                 logger.error(f"[Indeed] Error for '{keywords}': {e}")
