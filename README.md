@@ -109,7 +109,7 @@ Also enable: **Settings → Actions → General → Workflow permissions → Rea
 
 ## ⏰ Schedule
 
-Runs at **06:15 AM and 06:15 PM IST** every day (`cron: '45 0,12 * * *'`).
+Runs at **00:45 and 12:45 UTC (06:15 and 18:15 IST)** every day (`cron: '45 0,12 * * *'`).
 
 ---
 
