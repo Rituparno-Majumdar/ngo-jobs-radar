@@ -2,7 +2,7 @@ name: NGO Job Tracker
 
 on:
   schedule:
-    # Runs twice daily: 00:40 and 12:40 UTC = 06:10 AM and 06:10 PM IST
+    # Runs at 00:45 and 12:45 UTC (06:15 and 18:15 IST)
     - cron: '45 0,12 * * *'
   workflow_dispatch: # Run manually from GitHub Actions tab
 

@@ -28,12 +28,12 @@
 
 | Platform | Method | Coverage |
 |---|---|---|
-| 🇺🇳 **ReliefWeb (UN OCHA)** | REST API | Humanitarian & UN org jobs globally |
-| 🇮🇳 **NGOJobsIndia** | RSS feed | India-specific NGO job board |
-| 🌐 **DevNetJobs** | RSS feed | International development sector |
-| 💡 **Idealist** | Web scrape | Nonprofit & social enterprise roles |
-| 🔗 **LinkedIn** | Web scrape | India-focused NGO & CSR listings |
-| 💻 **Remotive** | REST API | Remote social impact & AI roles |
+| 🇺🇳 **ReliefWeb** | API | Public REST API — most reliable |
+| 💼 **DevNetJobs** | Scrape | NGO-focused job board |
+| 💡 **Idealist** | Scrape | Social impact roles |
+| 🇮🇳 **NGOJobsIndia** | Scrape | India-specific NGO roles |
+| 🔗 **LinkedIn** | Scrape | May be blocked (anti-bot) |
+| 💻 **Indeed** | Scrape | May be blocked (anti-bot) |
 
 ---
 
