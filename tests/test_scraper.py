@@ -117,6 +117,7 @@ class TestReliefWebScraper:
 
         jobs = self.scraper.fetch_jobs()
 
+        assert len(jobs) >= 1, "fetch_jobs returned 0 jobs — dedup may have removed all results"
         # URL appears in multiple search terms but id is md5 of URL, so deduplicated
         urls = [j["url"] for j in jobs]
         assert len(urls) == len(set(urls)), "Duplicate URLs found — dedup is broken"

@@ -109,6 +109,16 @@ class TestTelegramNotifier:
         result = notifier.send_summary(total_new=1, total_checked=5)
         assert result is False
 
+    def test_send_summary_returns_false_on_network_failure(self, mocker):
+        """send_summary should catch network errors and return False."""
+        notifier = TelegramNotifier(bot_token="fake_token", chat_id="fake_chat")
+        mocker.patch(
+            "notifier.requests.post",
+            side_effect=requests.exceptions.RequestException("network error"),
+        )
+        result = notifier.send_summary(total_new=5, total_checked=20)
+        assert result is False
+
     def test_send_job_alert_invalid_url(self, mocker):
         """Jobs with invalid URLs should still send (with fallback text, not a link)."""
         notifier = TelegramNotifier(bot_token="fake_token", chat_id="fake_chat")

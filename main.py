@@ -43,6 +43,20 @@ def save_seen_jobs(seen_jobs: set):
         json.dump(jobs_list, f, indent=2)
 
 
+def filter_new_jobs(all_jobs, seen):
+    """Return jobs whose id is not in the seen set, deduplicating within the batch too."""
+    seen_in_call = set()
+    result = []
+    for job in all_jobs:
+        job_id = job.get("id")
+        if not job_id:
+            continue
+        if job_id not in seen and job_id not in seen_in_call:
+            seen_in_call.add(job_id)
+            result.append(job)
+    return result
+
+
 def main():
     logger.info("=" * 60)
     logger.info("🚀 NGO Job Tracker Starting...")

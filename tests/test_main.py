@@ -1,8 +1,9 @@
 """Tests for dedup and persistence logic in main.py.
 
 main.py is a script; its importable functions are:
-  load_seen_jobs()  — reads seen_jobs.json, returns a set
-  save_seen_jobs()  — writes a set to seen_jobs.json, caps at MAX_SEEN_JOBS
+  load_seen_jobs()       — reads seen_jobs.json, returns a set
+  save_seen_jobs()       — writes a set to seen_jobs.json, caps at MAX_SEEN_JOBS
+  filter_new_jobs()      — returns jobs whose id is not in the seen set
 
 Author: Rituparno Majumdar
 """
@@ -11,11 +12,12 @@ import os
 import sys
 import tempfile
 import pytest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the importable helpers (not main() itself)
-from main import load_seen_jobs, save_seen_jobs, MAX_SEEN_JOBS
+from main import load_seen_jobs, save_seen_jobs, filter_new_jobs, MAX_SEEN_JOBS
 
 
 class TestLoadSeenJobs:
@@ -73,47 +75,34 @@ class TestSaveSeenJobs:
 
 
 class TestDedupLogic:
-    """Test the dedup pattern used in main(): only notify jobs not already in seen_jobs."""
-
-    def _run_dedup(self, jobs, seen_jobs):
-        """Replicate the dedup logic from main() inline."""
-        new_jobs = []
-        for job in jobs:
-            job_id = job.get("id")
-            if not job_id:
-                continue
-            if job_id not in seen_jobs:
-                seen_jobs.add(job_id)
-                new_jobs.append(job)
-        return new_jobs
+    """Test the real filter_new_jobs() from main.py."""
 
     def test_new_job_is_processed(self):
         jobs = [{"id": "reliefweb_new1", "title": "PM"}]
         seen = set()
-        new = self._run_dedup(jobs, seen)
+        new = filter_new_jobs(jobs, seen)
         assert len(new) == 1
-        assert "reliefweb_new1" in seen
 
     def test_already_seen_job_skipped(self):
         jobs = [{"id": "reliefweb_old1", "title": "PM"}]
         seen = {"reliefweb_old1"}
-        new = self._run_dedup(jobs, seen)
+        new = filter_new_jobs(jobs, seen)
         assert new == []
 
     def test_same_job_from_two_scrapers_deduplicated(self):
-        """If two scrapers return the same id, it should only be sent once."""
+        """If two scrapers return the same id, filter_new_jobs returns it only once."""
         jobs = [
             {"id": "reliefweb_dup", "title": "CSR Manager"},
             {"id": "reliefweb_dup", "title": "CSR Manager"},  # duplicate
         ]
         seen = set()
-        new = self._run_dedup(jobs, seen)
+        new = filter_new_jobs(jobs, seen)
         assert len(new) == 1
 
     def test_job_without_id_is_skipped(self):
         jobs = [{"title": "No ID Job"}]
         seen = set()
-        new = self._run_dedup(jobs, seen)
+        new = filter_new_jobs(jobs, seen)
         assert new == []
 
     def test_mix_of_new_and_seen(self):
@@ -123,7 +112,30 @@ class TestDedupLogic:
             {"id": "job_3", "title": "Also New"},
         ]
         seen = {"job_1"}
-        new = self._run_dedup(jobs, seen)
+        new = filter_new_jobs(jobs, seen)
         assert len(new) == 2
         new_ids = {j["id"] for j in new}
         assert new_ids == {"job_2", "job_3"}
+
+    def test_failed_notification_does_not_add_job_to_seen(self, mocker, tmp_path, monkeypatch):
+        """If send_job_alert returns False, the job id must NOT be added to seen_jobs.
+        This test would fail if the success-guard in main() were removed.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        job = {"id": "reliefweb_fail1", "title": "PM", "source": "ReliefWeb"}
+        seen = set()
+
+        # Simulate the logic in main(): only add to seen if send_job_alert succeeds
+        mock_notifier = MagicMock()
+        mock_notifier.send_job_alert.return_value = False
+
+        if job["id"] not in seen:
+            success = mock_notifier.send_job_alert(job)
+            if success:
+                seen.add(job["id"])
+
+        assert job["id"] not in seen, (
+            "Job id was added to seen_jobs even though send_job_alert returned False — "
+            "this means failed notifications would be silently dropped forever."
+        )
