@@ -6,6 +6,7 @@ import logging
 import time
 import random
 from urllib.parse import quote_plus
+import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +193,203 @@ class IndeedNGOScraper(BaseScraper):
         return jobs
 
 
+# ─── Scraper 3: ReliefWeb RSS Scraper ────────────────────────────────────────
+class ReliefWebScraper(BaseScraper):
+    """Scrapes NGO jobs from ReliefWeb public RSS feeds (no auth required)."""
+
+    RSS_SEARCHES = [
+        "project+coordinator",
+        "programme+coordinator",
+        "NGO+manager",
+        "social+impact",
+        "CSR",
+    ]
+    BASE_RSS = "https://reliefweb.int/jobs/rss.xml"
+
+    def fetch_jobs(self) -> list:
+        jobs = []
+        seen_ids = set()
+        for search in self.RSS_SEARCHES:
+            try:
+                url = f"{self.BASE_RSS}?search={search}&category=0&country=0&type=0&source=0"
+                resp = self.session.get(url, timeout=15)
+                resp.raise_for_status()
+                root = ET.fromstring(resp.content)
+                ns = {"media": "http://search.yahoo.com/mrss/"}
+                for item in root.findall(".//item"):
+                    link_el = item.find("link")
+                    title_el = item.find("title")
+                    desc_el = item.find("description")
+                    pub_el = item.find("pubDate")
+                    if title_el is None or link_el is None:
+                        continue
+                    job_url = link_el.text.strip() if link_el.text else ""
+                    job_id = f"reliefweb_{abs(hash(job_url))}"
+                    if job_id in seen_ids:
+                        continue
+                    seen_ids.add(job_id)
+                    # Extract org and country from description HTML
+                    raw_desc = desc_el.text or "" if desc_el is not None else ""
+                    soup_desc = BeautifulSoup(raw_desc, "html.parser")
+                    org = ""
+                    country = ""
+                    for tag in soup_desc.find_all("div", class_="tag"):
+                        text = tag.get_text(strip=True)
+                        if text.startswith("Organization:"):
+                            org = text.replace("Organization:", "").strip()
+                        elif text.startswith("Country:"):
+                            country = text.replace("Country:", "").strip()
+                    jobs.append({
+                        "id": job_id,
+                        "title": title_el.text.strip(),
+                        "company": org,
+                        "location": country if country else "International",
+                        "url": job_url,
+                        "source": "ReliefWeb",
+                        "description": "",
+                        "date_posted": pub_el.text.strip() if pub_el is not None and pub_el.text else "",
+                    })
+            except Exception as e:
+                logger.warning(f"[ReliefWeb] RSS search '{search}' failed: {e}")
+        logger.info(f"[ReliefWeb] Found {len(jobs)} jobs.")
+        return jobs
+
+
+# ─── Scraper 4: DevNetJobs Scraper ───────────────────────────────────────────
+class DevNetJobsScraper(BaseScraper):
+    """Scrapes NGO jobs from DevNetJobs.org."""
+
+    SEARCH_URL = "https://www.devnetjobs.org/jobs/all-categories/all-types"
+
+    def fetch_jobs(self) -> list:
+        jobs = []
+        try:
+            headers = dict(self.session.headers)
+            headers["Referer"] = "https://www.devnetjobs.org/"
+            resp = self.session.get(self.SEARCH_URL, headers=headers, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for row in soup.select("table.jobslist tr")[1:31]:
+                cols = row.find_all("td")
+                if len(cols) < 3:
+                    continue
+                title_el = cols[0].find("a")
+                if not title_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                href = title_el.get("href", "")
+                url = f"https://www.devnetjobs.org{href}" if href.startswith("/") else href
+                org = cols[1].get_text(strip=True) if len(cols) > 1 else ""
+                location = cols[2].get_text(strip=True) if len(cols) > 2 else ""
+                job_id = f"devnet_{abs(hash(url))}"
+                jobs.append({
+                    "id": job_id,
+                    "title": title,
+                    "company": org,
+                    "location": location,
+                    "url": url,
+                    "source": "DevNetJobs",
+                    "description": "",
+                    "date_posted": "",
+                })
+        except Exception as e:
+            logger.warning(f"[DevNetJobs] Scrape failed: {e}")
+        logger.info(f"[DevNetJobs] Found {len(jobs)} jobs.")
+        return jobs
+
+
+# ─── Scraper 5: Idealist Scraper ─────────────────────────────────────────────
+class IdealistScraper(BaseScraper):
+    """Scrapes NGO/social-impact jobs from Idealist.org."""
+
+    SEARCH_URLS = [
+        "https://www.idealist.org/en/jobs?q=NGO+coordinator&radius=Anywhere",
+        "https://www.idealist.org/en/jobs?q=CSR+sustainability&radius=Anywhere",
+    ]
+
+    def fetch_jobs(self) -> list:
+        jobs = []
+        seen_ids = set()
+        for url in self.SEARCH_URLS:
+            try:
+                resp = self.session.get(url, timeout=15)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for card in soup.select("div[data-test='job-card']")[:15]:
+                    title_el = card.select_one("h2, h3, [data-test='job-title']")
+                    link_el = card.select_one("a[href]")
+                    org_el = card.select_one("[data-test='org-name'], .org-name")
+                    loc_el = card.select_one("[data-test='location'], .location")
+                    if not title_el or not link_el:
+                        continue
+                    title = title_el.get_text(strip=True)
+                    href = link_el.get("href", "")
+                    job_url = f"https://www.idealist.org{href}" if href.startswith("/") else href
+                    job_id = f"idealist_{abs(hash(job_url))}"
+                    if job_id in seen_ids:
+                        continue
+                    seen_ids.add(job_id)
+                    jobs.append({
+                        "id": job_id,
+                        "title": title,
+                        "company": org_el.get_text(strip=True) if org_el else "",
+                        "location": loc_el.get_text(strip=True) if loc_el else "",
+                        "url": job_url,
+                        "source": "Idealist",
+                        "description": "",
+                        "date_posted": "",
+                    })
+            except Exception as e:
+                logger.warning(f"[Idealist] Scrape failed for {url}: {e}")
+        logger.info(f"[Idealist] Found {len(jobs)} jobs.")
+        return jobs
+
+
+# ─── Scraper 6: NGOJobsIndia Scraper ─────────────────────────────────────────
+class NGOJobsIndiaScraper(BaseScraper):
+    """Scrapes jobs from NGOJobsIndia.com — India-focused NGO roles."""
+
+    BASE_URL = "https://www.ngojobsindia.com/jobs/"
+
+    def fetch_jobs(self) -> list:
+        jobs = []
+        try:
+            resp = self.session.get(self.BASE_URL, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for card in soup.select(".job-listing, article.job_listing")[:20]:
+                title_el = card.select_one("h3 a, .job-title a, h2 a")
+                if not title_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                href = title_el.get("href", "")
+                job_id = f"ngoindia_{abs(hash(href))}"
+                org_el = card.select_one(".company, .company-name, .job-company")
+                loc_el = card.select_one(".location, .job-location")
+                jobs.append({
+                    "id": job_id,
+                    "title": title,
+                    "company": org_el.get_text(strip=True) if org_el else "",
+                    "location": loc_el.get_text(strip=True) if loc_el else "India",
+                    "url": href,
+                    "source": "NGOJobsIndia",
+                    "description": "",
+                    "date_posted": "",
+                })
+        except Exception as e:
+            logger.warning(f"[NGOJobsIndia] Scrape failed: {e}")
+        logger.info(f"[NGOJobsIndia] Found {len(jobs)} jobs.")
+        return jobs
+
+
 def get_all_scrapers():
     return [
-        LinkedInNGOScraper(),
-        IndeedNGOScraper(),
+        ReliefWebScraper(),       # API-based, most reliable
+        DevNetJobsScraper(),      # NGO-focused board
+        IdealistScraper(),        # Social impact roles
+        NGOJobsIndiaScraper(),    # India-specific
+        LinkedInNGOScraper(),     # May be blocked
+        IndeedNGOScraper(),       # May be blocked
     ]
 
 

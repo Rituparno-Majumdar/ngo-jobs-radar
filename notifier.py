@@ -26,6 +26,10 @@ def is_valid_url(url: str) -> bool:
 
 # Source emojis for visual scanning in Telegram
 SOURCE_EMOJI = {
+    "ReliefWeb": "🌍",
+    "DevNetJobs": "🤝",
+    "Idealist": "💡",
+    "NGOJobsIndia": "🇮🇳",
     "LinkedIn": "💼",
     "Indeed": "🔍",
     "Unknown": "📋",
