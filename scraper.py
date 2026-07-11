@@ -6,7 +6,8 @@ import logging
 import time
 import random
 import hashlib
-from urllib.parse import quote_plus
+import json
+from urllib.parse import quote_plus, urljoin
 import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,125 @@ EXCLUDE_TERMS = [
     "it project manager", "software project manager"
 ]
 
+
+# ─── Helper Functions for LLM Extraction ──────────────────────────────────────
+
+def extract_clean_text(html_content, base_url=None):
+    """Cleans up raw HTML into formatted text, preserving links as markdown [text](url)."""
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        # Remove elements that contain navigation, scripts, styling, or boilerplate
+        for element in soup(["script", "style", "nav", "footer", "header", "noscript"]):
+            element.extract()
+        
+        # Convert links to [text](url) format to allow Gemini to extract listing URLs
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if base_url:
+                href = urljoin(base_url, href)
+            text = a.get_text().strip()
+            if text:
+                a.replace_with(f" [{text}]({href}) ")
+            else:
+                a.replace_with(f" ({href}) ")
+                
+        text = soup.get_text(separator=' ')
+        # Collapse whitespace and empty lines
+        lines = [line.strip() for line in text.splitlines()]
+        clean_lines = [line for line in lines if line]
+        return '\n'.join(clean_lines)
+    except Exception as e:
+        logger.warning(f"Error cleaning HTML: {e}")
+        return html_content[:50000]
+
+
+def gemini_extract_items(text, schema_type, source_name, base_url=None):
+    """Calls the Gemini API using requests to perform structured item extraction."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("GEMINI_API_KEY not found in environment. Fallback failed.")
+        return []
+
+    model = "gemini-2.5-flash"
+    
+    if schema_type == 'grant':
+        prompt = (
+            f"You are a web scraping assistant extracting institutional grant opportunities (CSR, Govt, FCRA, RFPs, funding calls) from the text of a webpage from '{source_name}'.\n"
+            f"Analyze the text below and extract all open grant opportunities/funding calls. Ignore job vacancies or standard construction/civil tenders.\n\n"
+            f"Extract the following fields for each grant opportunity and return them as a JSON list of objects:\n"
+            f"- 'title': The title of the grant or RFP opportunity.\n"
+            f"- 'company': The donor organization or foundation name (if not found, use 'See grant listing' or a reasonable guess from context).\n"
+            f"- 'url': The URL link to the grant detail page (use links found in the text associated with the grant; resolve against '{base_url}' if relative).\n"
+            f"- 'description': A brief summary of eligibility, guidelines, or scope (approx 100-200 characters).\n"
+            f"- 'location': The target location or region (e.g. 'India', 'Global').\n\n"
+            f"Only return a valid JSON list. Do not include markdown code block formatting like ```json ... ```. Just return the raw JSON string starting with [ and ending with ]."
+        )
+    else:
+        prompt = (
+            f"You are a web scraping assistant extracting NGO / development sector / social impact job openings from the text of a webpage from '{source_name}'.\n"
+            f"Analyze the text below and extract all open job vacancies. Filter for relevant roles such as project coordinators, program officers, CSR managers, social work, monitoring & evaluation.\n\n"
+            f"Extract the following fields for each job opening and return them as a JSON list of objects:\n"
+            f"- 'title': The job title.\n"
+            f"- 'company': The organization or company hiring (if not found, use 'Unknown' or a reasonable guess from context).\n"
+            f"- 'location': The job location.\n"
+            f"- 'url': The URL link to apply or view the job detail page (use links found in the text associated with the job; resolve against '{base_url}' if relative).\n"
+            f"- 'description': A brief summary of the role (approx 100-200 characters).\n"
+            f"- 'date_posted': The date posted if visible (otherwise empty string).\n\n"
+            f"Only return a valid JSON list. Do not include markdown code block formatting like ```json ... ```. Just return the raw JSON string starting with [ and ending with ]."
+        )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": f"{prompt}\n\nWebpage Text:\n\"\"\"\n{text}\n\"\"\""}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json"
+        }
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        res_data = response.json()
+        content = res_data['candidates'][0]['content']['parts'][0]['text'].strip()
+        
+        # Strip markdown format blocks if present
+        if content.startswith("```"):
+            lines = content.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+            
+        items = json.loads(content)
+        if not isinstance(items, list):
+            logger.error("Gemini returned JSON that is not a list.")
+            return []
+        return items
+    except Exception as e:
+        logger.error(f"Failed calling Gemini API or parsing response: {e}")
+        return []
+
+
+def generate_stable_id(prefix, item):
+    """Generates a stable unique ID for an extracted item based on URL or Title."""
+    url = item.get("url", "")
+    title = item.get("title", "")
+    if url and url != "#":
+        unique_str = url.split("?")[0].rstrip("/")
+    else:
+        unique_str = title
+    val_hash = hashlib.md5(unique_str.encode()).hexdigest()[:12]
+    return f"{prefix}_{val_hash}"
+
+
+# ─── Base Scraper Class ───────────────────────────────────────────────────────
 
 class BaseScraper:
     def __init__(self):
@@ -55,8 +175,45 @@ class BaseScraper:
         is_excluded = any(ex in combined for ex in EXCLUDE_TERMS)
         return has_core and not is_excluded
 
+    def llm_fallback(self, response, schema_type, source_name, prefix, base_url=None):
+        """Standard fallback pipeline when HTML parsing yields 0 results or fails."""
+        logger.info(f"[{source_name}] HTML parsing yielded 0 results or failed. Attempting LLM extraction fallback...")
+        try:
+            clean_text = extract_clean_text(response.text, base_url=base_url or response.url)
+            items = gemini_extract_items(clean_text, schema_type, source_name, base_url=base_url or response.url)
+            
+            processed_items = []
+            for item in items:
+                item_id = item.get("id")
+                if not item_id:
+                    item_id = generate_stable_id(prefix, item)
+                
+                item["source"] = source_name
+                title = item.get("title", "")
+                desc = item.get("description", "")
+                loc = item.get("location", "")
+                
+                if self.matches_profile(title, desc, loc):
+                    processed_items.append({
+                        "id": item_id,
+                        "title": title,
+                        "company": item.get("company", "See listing"),
+                        "location": loc or "India",
+                        "url": item.get("url", ""),
+                        "source": source_name,
+                        "description": desc or "View listing for details.",
+                        "date_posted": item.get("date_posted", ""),
+                    })
+            
+            logger.info(f"[{source_name}] LLM fallback successfully extracted {len(processed_items)} items.")
+            return processed_items
+        except Exception as fallback_err:
+            logger.error(f"[{source_name}] LLM fallback failed: {fallback_err}")
+            return []
+
 
 # ─── Scraper 1: LinkedIn Public Scraper ──────────────────────────────────────
+
 class LinkedInNGOScraper(BaseScraper):
     SEARCH_QUERIES = [
         ("project coordinator ngo", "India"),
@@ -70,13 +227,13 @@ class LinkedInNGOScraper(BaseScraper):
         seen_ids = set()
 
         for keywords, location in self.SEARCH_QUERIES:
+            query_jobs = []
             encoded_kw = quote_plus(keywords)
             encoded_loc = quote_plus(location)
-            # f_TPR=r604800 filters for past 7 days
             url = f"https://www.linkedin.com/jobs/search?keywords={encoded_kw}&location={encoded_loc}&f_TPR=r604800"
+            response = None
             try:
                 response = self.session.get(url, timeout=15)
-                # Random delay between queries to avoid bot detection
                 time.sleep(random.uniform(2, 4))
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -102,7 +259,7 @@ class LinkedInNGOScraper(BaseScraper):
 
                     if self.matches_profile(title, "", location_text):
                         seen_ids.add(job_id)
-                        jobs.append({
+                        query_jobs.append({
                             "id": f"linkedin_{job_id}",
                             "title": title,
                             "company": company,
@@ -115,11 +272,18 @@ class LinkedInNGOScraper(BaseScraper):
             except Exception as e:
                 logger.error(f"[LinkedIn] Error for '{keywords}': {e}")
 
+            # Fallback if scraping yielded no results but page loaded successfully
+            if not query_jobs and response is not None and response.status_code == 200:
+                query_jobs = self.llm_fallback(response, 'job', 'LinkedIn', 'linkedin')
+
+            jobs.extend(query_jobs)
+
         logger.info(f"[LinkedIn] Found {len(jobs)} matching jobs.")
         return jobs
 
 
 # ─── Scraper 2: Indeed Public Scraper ────────────────────────────────────────
+
 class IndeedNGOScraper(BaseScraper):
     SEARCH_QUERIES = [
         ("ngo project coordinator", "India"),
@@ -131,7 +295,6 @@ class IndeedNGOScraper(BaseScraper):
         jobs = []
         seen_ids = set()
 
-        # Pre-flight: visit home page to get session cookies
         try:
             self.session.get("https://in.indeed.com/", timeout=10)
             time.sleep(random.uniform(1, 2))
@@ -139,21 +302,18 @@ class IndeedNGOScraper(BaseScraper):
             logger.warning(f"[Indeed] Pre-flight failed: {e}")
 
         for keywords, location in self.SEARCH_QUERIES:
+            query_jobs = []
             encoded_kw = quote_plus(keywords)
             encoded_loc = quote_plus(location)
             url = f"https://in.indeed.com/jobs?q={encoded_kw}&l={encoded_loc}&fromage=7"
+            response = None
             try:
-                # Set Referer to make it look like a search from the home page
                 self.session.headers.update({'Referer': 'https://in.indeed.com/'})
-                
-                # Indeed requires clean headers to bypass bot blocks
                 response = self.session.get(url, timeout=15)
-                # Indeed is very sensitive; longer random delay
                 time.sleep(random.uniform(3, 6))
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
 
-                # Indeed job cards usually have class td-heading or job_seen_beacon
                 cards = soup.find_all('td', class_='resultContent') or soup.find_all('div', class_='job_seen_beacon')
                 for card in cards:
                     title_el = card.find('h2', class_='jobTitle') or card.find('span', title=True)
@@ -170,7 +330,6 @@ class IndeedNGOScraper(BaseScraper):
                     href = link_el['href']
                     job_url = f"https://in.indeed.com{href}" if href.startswith('/') else href
                     
-                    # Extract unique job key (jk)
                     jk_match = re.search(r'jk=([a-fA-F0-9]+)', job_url)
                     job_id = jk_match.group(1) if jk_match else job_url.split('/')[-1]
 
@@ -179,7 +338,7 @@ class IndeedNGOScraper(BaseScraper):
 
                     if self.matches_profile(title, "", location_text):
                         seen_ids.add(job_id)
-                        jobs.append({
+                        query_jobs.append({
                             "id": f"indeed_{job_id}",
                             "title": title,
                             "company": company,
@@ -192,11 +351,18 @@ class IndeedNGOScraper(BaseScraper):
             except Exception as e:
                 logger.error(f"[Indeed] Error for '{keywords}': {e}")
 
+            # Fallback if scraping yielded no results but page loaded successfully
+            if not query_jobs and response is not None and response.status_code == 200:
+                query_jobs = self.llm_fallback(response, 'job', 'Indeed', 'indeed', base_url="https://in.indeed.com")
+
+            jobs.extend(query_jobs)
+
         logger.info(f"[Indeed] Found {len(jobs)} matching jobs.")
         return jobs
 
 
 # ─── Scraper 3: ReliefWeb RSS Scraper ────────────────────────────────────────
+
 class ReliefWebScraper(BaseScraper):
     """Scrapes NGO jobs from ReliefWeb public RSS feeds (no auth required)."""
 
@@ -230,7 +396,7 @@ class ReliefWebScraper(BaseScraper):
                     if job_id in seen_ids:
                         continue
                     seen_ids.add(job_id)
-                    # Extract org and country from description HTML
+                    
                     raw_desc = (desc_el.text or "") if desc_el is not None else ""
                     soup_desc = BeautifulSoup(raw_desc, "html.parser")
                     org = ""
@@ -260,6 +426,7 @@ class ReliefWebScraper(BaseScraper):
 
 
 # ─── Scraper 4: DevNetJobs Scraper ───────────────────────────────────────────
+
 class DevNetJobsScraper(BaseScraper):
     """Scrapes NGO jobs from DevNetJobs.org."""
 
@@ -267,14 +434,15 @@ class DevNetJobsScraper(BaseScraper):
 
     def fetch_jobs(self) -> list:
         jobs = []
+        response = None
         try:
             headers = dict(self.session.headers)
             headers["Referer"] = "https://www.devnetjobs.org/"
-            resp = self.session.get(self.SEARCH_URL, headers=headers, timeout=15)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+            response = self.session.get(self.SEARCH_URL, headers=headers, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
             MAX_RESULTS = 30
-            for row in soup.select("table.jobslist tr")[1:MAX_RESULTS + 1]:  # skip header row, max 30 results
+            for row in soup.select("table.jobslist tr")[1:MAX_RESULTS + 1]:
                 cols = row.find_all("td")
                 if len(cols) < 3:
                     continue
@@ -301,18 +469,19 @@ class DevNetJobsScraper(BaseScraper):
                 })
         except Exception as e:
             logger.warning(f"[DevNetJobs] Scrape failed: {e}")
+
+        # Fallback if scraping yielded no results but page loaded successfully
+        if not jobs and response is not None and response.status_code == 200:
+            jobs = self.llm_fallback(response, 'job', 'DevNetJobs', 'devnet', base_url="https://www.devnetjobs.org")
+
         logger.info(f"[DevNetJobs] Found {len(jobs)} jobs.")
         return jobs
 
 
 # ─── Scraper 5: Idealist Scraper ─────────────────────────────────────────────
-class IdealistScraper(BaseScraper):
-    """Idealist.org scraper — currently disabled.
 
-    Idealist is a React SPA; plain requests return no job cards.
-    The RSS feed at /rss/jobs returns 404 (confirmed 2026-05-26).
-    Would require Playwright/Selenium for real scraping.
-    """
+class IdealistScraper(BaseScraper):
+    """Idealist.org scraper — currently disabled."""
 
     def fetch_jobs(self) -> list:
         logger.info("[Idealist] Skipped — React SPA with no public RSS feed; requires browser automation.")
@@ -320,6 +489,7 @@ class IdealistScraper(BaseScraper):
 
 
 # ─── Scraper 6: NGOJobsIndia Scraper ─────────────────────────────────────────
+
 class NGOJobsIndiaScraper(BaseScraper):
     """Scrapes jobs from NGOJobsIndia.com — India-focused NGO roles."""
 
@@ -327,10 +497,11 @@ class NGOJobsIndiaScraper(BaseScraper):
 
     def fetch_jobs(self) -> list:
         jobs = []
+        response = None
         try:
-            resp = self.session.get(self.BASE_URL, timeout=15)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+            response = self.session.get(self.BASE_URL, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
             for card in soup.select(".job-listing, article.job_listing")[:20]:
                 title_el = card.select_one("h3 a, .job-title a, h2 a")
                 if not title_el:
@@ -355,18 +526,21 @@ class NGOJobsIndiaScraper(BaseScraper):
                 })
         except Exception as e:
             logger.warning(f"[NGOJobsIndia] Scrape failed: {e}")
+
+        # Fallback if scraping yielded no results but page loaded successfully
+        if not jobs and response is not None and response.status_code == 200:
+            jobs = self.llm_fallback(response, 'job', 'NGOJobsIndia', 'ngoindia')
+
         logger.info(f"[NGOJobsIndia] Found {len(jobs)} jobs.")
         return jobs
 
 
 def get_all_scrapers():
     return [
-        ReliefWebScraper(),       # RSS-based, most reliable
-        DevNetJobsScraper(),      # NGO-focused board
-        IdealistScraper(),        # Social impact roles
-        NGOJobsIndiaScraper(),    # India-specific
-        LinkedInNGOScraper(),     # May be blocked
-        IndeedNGOScraper(),       # May be blocked
+        ReliefWebScraper(),
+        DevNetJobsScraper(),
+        IdealistScraper(),
+        NGOJobsIndiaScraper(),
+        LinkedInNGOScraper(),
+        IndeedNGOScraper(),
     ]
-
-
